@@ -59,6 +59,13 @@ async function getUsers(): Promise<User[]> {
   return ((await store().get("users", { type: "json" })) as User[]) || [];
 }
 async function saveUsers(users: User[]) { await store().setJSON("users", users); }
+// setup stays open until the first admin has logged in once (and no data exists yet),
+// so a mistyped password at setup can be fixed by running setup again
+async function setupOpen() {
+  const users = await getUsers();
+  if (!users.length) return true;
+  return users.length === 1 && !users[0].lastLogin && (await listYears()).length === 0;
+}
 
 // ---------- year docs (optimistic concurrency) ----------
 const yearKey = (y: string) => `year/${y}`;
@@ -148,16 +155,16 @@ export default async (req: Request, context: Context) => {
   try {
     // ----- public -----
     if (parts[0] === "status" && m === "GET") {
-      return json({ needsSetup: (await getUsers()).length === 0 });
+      return json({ needsSetup: await setupOpen() });
     }
     if (parts[0] === "setup" && m === "POST") {
-      const users = await getUsers();
-      if (users.length) return fail("המערכת כבר הוגדרה", 403);
+      const cur = await store().getWithMetadata("users", { type: "json" });
+      if (!(await setupOpen())) return fail("המערכת כבר הוגדרה", 403);
       const email = normEmail(body.email);
       if (!email.includes("@")) return fail("מייל לא תקין");
       if (!pwOk(body.password)) return fail("סיסמה של 8 תווים לפחות");
       const u: User = { email, name: String(body.name || email.split("@")[0]).slice(0, 80), role: "admin", ...hashPw(body.password), mustChange: !!body.mustChange, created: new Date().toISOString() };
-      const { modified } = await store().setJSON("users", [u], { onlyIfNew: true });
+      const { modified } = await store().setJSON("users", [u], cur === null ? { onlyIfNew: true } : { onlyIfMatch: cur.etag });
       if (!modified) return fail("המערכת כבר הוגדרה", 403);
       return json({ ok: true });
     }

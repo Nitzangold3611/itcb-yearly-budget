@@ -1,6 +1,6 @@
 /* ITCB yearly budget – client */
 (() => {
-  const VERSION = "1.0.0";
+  const VERSION = "1.0.1";
   const ROLE_LABEL = { admin: "מנהל", editor: "עורך", viewer: "צופה" };
   const MONTHS = ["", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
   const MSHORT = ["", "ינו׳", "פבר׳", "מרץ", "אפר׳", "מאי", "יוני", "יולי", "אוג׳", "ספט׳", "אוק׳", "נוב׳", "דצמ׳"];
@@ -175,10 +175,13 @@
       <div class="field"><label for="n">שם</label><input class="input" id="n" required></div>
       <div class="field"><label for="u">מייל</label><input class="input" id="u" type="email" dir="ltr" autocomplete="username" required></div>
       ${pwField("p", "סיסמה (8 תווים לפחות)", "new-password", "required minlength=8")}
+      ${pwField("p2", "אימות סיסמה", "new-password", "required minlength=8")}
+      <p class="sub" style="margin:-4px 0 10px;text-align:right">טיפ: לחיצה על סמל העין מציגה את הסיסמה. ודא שהמקלדת באנגלית.</p>
       <div class="err" id="err"></div>
       <button class="btn primary block" type="submit">יצירת מנהל</button>`);
     f.onsubmit = async (e) => {
       e.preventDefault();
+      if (p.value !== p2.value) return (document.getElementById("err").textContent = "הסיסמאות אינן תואמות");
       try {
         await api("setup", { method: "POST", body: { name: n.value, email: u.value, password: p.value } });
         toast("החשבון נוצר – אפשר להתחבר"); renderLogin();
