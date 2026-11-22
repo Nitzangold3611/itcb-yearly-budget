@@ -1,6 +1,6 @@
 /* ITCB yearly budget – client */
 (() => {
-  const VERSION = "1.1.0";
+  const VERSION = "1.2.0";
   const ROLE_LABEL = { admin: "מנהל", editor: "עורך", viewer: "צופה" };
   const MONTHS = ["", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
   const MSHORT = ["", "ינו׳", "פבר׳", "מרץ", "אפר׳", "מאי", "יוני", "יולי", "אוג׳", "ספט׳", "אוק׳", "נוב׳", "דצמ׳"];
@@ -250,8 +250,9 @@
     $app.innerHTML = `
       <header class="top">
         <div class="top-inner">
+          <button class="burger" id="burger" aria-label="תפריט" aria-expanded="false"><span></span><span></span><span></span></button>
           <img src="/logo.png" alt="ITCB">
-          <div class="top-title"><b>תוכנית תקציב שנתית</b><span>עמותת הבודקים – ITCB</span></div>
+          <div class="top-title"><b>תוכנית תקציב שנתית</b><span>עמותת הבודקים – ITCB</span><small class="m-ctx">${S.view === "users" ? "ניהול משתמשים" : S.year ? `${S.year} · ${esc((VIEWS.find((v) => v[0] === S.view) || ["", ""])[1])}` : ""}</small></div>
           <div class="spacer"></div>
           <div class="user-chip" id="userChip"><span class="uname">${esc(S.user.name)}</span><span class="role-tag">${ROLE_LABEL[S.user.role]}</span><span class="avatar">${esc(initials)}</span>
             <div class="menu hidden" id="userMenu">
@@ -268,14 +269,37 @@
         ${S.view !== "users" && S.year ? `<nav class="subtabs" aria-label="לשוניות">${VIEWS.map(([k, l], i) => `<button data-view="${k}" class="${S.view === k ? "active" : ""}"><span class="num">${i + 1}</span>${l}</button>`).join("")}</nav>` : ""}
       </header>
       <main id="main"></main>
-      <footer class="ver">ITCB · ניהול תקציב · גרסה ${VERSION}</footer>`;
+      <footer class="ver">ITCB · ניהול תקציב · גרסה ${VERSION}</footer>
+      <div class="side-ov hidden" id="sideOv"></div>
+      <aside class="side-nav" id="sideNav" aria-label="תפריט ראשי" aria-hidden="true">
+        <div class="side-head"><img src="/logo.png" alt="ITCB"><button class="btn ghost" id="sideClose" aria-label="סגירת התפריט">✕</button></div>
+        <div class="side-user"><span class="avatar">${esc(initials)}</span><div><b>${esc(S.user.name)}</b><div class="muted" style="font-size:13px">${ROLE_LABEL[S.user.role]} · <span dir="ltr">${esc(S.user.email)}</span></div></div></div>
+        ${S.years.length ? `<div class="side-group">שנת תקציב</div><div class="side-years">${S.years.map((y) => `<button data-year="${y}" class="${S.view !== "users" && S.year === y ? "active" : ""}">${y}</button>`).join("")}${canEdit() ? `<button class="add-year" data-act="newYear">+ חדשה</button>` : ""}</div>` : canEdit() ? `<button data-act="newYear"><span class="si">+</span>שנה חדשה</button>` : ""}
+        ${S.year ? `<div class="side-group">לשוניות ${S.year}</div>${VIEWS.map(([k, l], i) => `<button data-view="${k}" class="${S.view === k ? "active" : ""}"><span class="si num-badge">${i + 1}</span>${l}</button>`).join("")}` : ""}
+        <div class="side-group">חשבון</div>
+        ${isAdmin() ? `<button data-act="users" class="${S.view === "users" ? "active" : ""}"><span class="si">👥</span>ניהול משתמשים</button>` : ""}
+        <button data-act="pw"><span class="si">🔑</span>שינוי סיסמה</button>
+        <button data-act="logout"><span class="si">↩</span>יציאה</button>
+        <div class="side-ver">גרסה ${VERSION}</div>
+      </aside>`;
     $app.querySelectorAll("[data-year]").forEach((b) => (b.onclick = async () => { S.year = b.dataset.year; if (S.view === "users") S.view = "income"; await loadYear(S.year); render(); }));
     $app.querySelectorAll("[data-view]").forEach((b) => (b.onclick = () => { S.view = b.dataset.view; render(); window.scrollTo(0, 0); }));
     const chip = document.getElementById("userChip"), menu = document.getElementById("userMenu");
     chip.onclick = (e) => { if (!e.target.closest(".menu")) menu.classList.toggle("hidden"); };
     document.onclick = (e) => { if (!e.target.closest("#userChip")) menu.classList.add("hidden"); };
+    // mobile side menu
+    const nav = document.getElementById("sideNav"), ov = document.getElementById("sideOv"), burger = document.getElementById("burger");
+    const setNav = (open) => {
+      nav.classList.toggle("open", open); ov.classList.toggle("hidden", !open);
+      nav.setAttribute("aria-hidden", String(!open)); burger.setAttribute("aria-expanded", String(open));
+      document.body.classList.toggle("no-scroll", open);
+    };
+    burger.onclick = () => setNav(true);
+    ov.onclick = () => setNav(false);
+    document.getElementById("sideClose").onclick = () => setNav(false);
+    document.body.classList.remove("no-scroll");
     $app.querySelectorAll("[data-act]").forEach((b) => (b.onclick = (e) => {
-      e.stopPropagation(); menu.classList.add("hidden");
+      e.stopPropagation(); menu.classList.add("hidden"); setNav(false);
       const a = b.dataset.act;
       if (a === "logout") logout();
       if (a === "pw") openChangePassword();
