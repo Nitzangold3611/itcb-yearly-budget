@@ -1,6 +1,6 @@
 /* ITCB yearly budget – client */
 (() => {
-  const VERSION = "1.0.1";
+  const VERSION = "1.1.0";
   const ROLE_LABEL = { admin: "מנהל", editor: "עורך", viewer: "צופה" };
   const MONTHS = ["", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
   const MSHORT = ["", "ינו׳", "פבר׳", "מרץ", "אפר׳", "מאי", "יוני", "יולי", "אוג׳", "ספט׳", "אוק׳", "נוב׳", "דצמ׳"];
@@ -17,6 +17,7 @@
     { k: "amount", l: 'סכום בש"ח', t: "money" },
     { k: "detail", l: "פירוט", t: "long" },
     { k: "examinees", l: "כמות נבחנים שנגשו", t: "num" },
+    { k: "examDate", l: "תאריך בחינה", t: "date", hint: "התאריך שבו התקיימה הבחינה בפועל" },
     { k: "training", l: "הדרכה", t: "cat" },
     { k: "price", l: "מחיר", t: "cat" },
     { k: "sector", l: "מגזר", t: "cat" },
@@ -1065,7 +1066,7 @@
       return v;
     }))];
     const inc = d.income, dn = inc.filter((r) => r.status === DONE);
-    add("הכנסות", listAoa(INC, inc), [14, 10, 14, 14, 12, 7, 12, 50, 10, 12, 8, 18, 24, 12]);
+    add("הכנסות", listAoa(INC, inc), [14, 10, 14, 14, 12, 7, 12, 50, 10, 12, 12, 8, 18, 24, 12]);
     add("ריכוז הכנסות", pivotAoa(inc, INC_KEYS, monthCols("amount")));
     add("ריכוז הכנסות בפועל בלבד", pivotAoa(dn, INC_KEYS, monthCols("amount")));
     add("ריכוז הוצאות", pivotAoa(expRowsFiltered(d), EXP_KEYS, monthCols("amount")));
@@ -1101,7 +1102,7 @@
 
   // ================= IMPORT =================
   const INC_MAP = [["category", ["קטגוריה"]], ["status", ["תחזית/בוצע", "תחזית"]], ["body", ["גוף"]], ["level", ["רמת הסמכה", "סיווג"]], ["receipt", ["קבלה"]], ["month", ["חודש"]], ["amount", ["סכום"]],
-    ["detail", ["פירוט"]], ["examinees", ["נבחנים"]], ["training", ["הדרכה"]], ["price", ["מחיר"]], ["sector", ["מגזר"]], ["client", ["לקוח"]], ["date", ["תאריך"]]];
+    ["detail", ["פירוט"]], ["examinees", ["נבחנים"]], ["training", ["הדרכה"]], ["price", ["מחיר"]], ["sector", ["מגזר"]], ["client", ["לקוח"]], ["examDate", ["תאריך בחינה", "תאריך מבחן"]], ["date", ["תאריך"]]];
   const EXP_MAP = [["serial", ["סידורי"]], ["year", ["שנה"]], ["ref", ["אסמכתא", "חשבונית"]], ["amount", ["סכום"]], ["detail", ["פירוט"]], ["category", ["קטגוריה"]], ["classification", ["סיווג"]],
     ["month", ["חודש"]], ["status", ["תחזית"]], ["priority", ["עדיפות"]], ["manager", ["מנהל"]], ["impl", ["יישום"]], ["emergency", ["חירום"]], ["notes", ["הערות"]]];
   function sheetRows(ws, map, mustHave) {
