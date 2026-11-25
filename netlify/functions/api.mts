@@ -71,7 +71,7 @@ async function setupOpen() {
 const yearKey = (y: string) => `year/${y}`;
 const validYear = (y: string) => /^\d{4}$/.test(y);
 function emptyDoc(year: string) {
-  return { year, income: [], expenses: [], settings: defaultSettings(), updatedAt: new Date().toISOString(), updatedBy: "" };
+  return { year, income: [], expenses: [], invoices: [], settings: defaultSettings(), updatedAt: new Date().toISOString(), updatedBy: "" };
 }
 function defaultSettings() {
   return {
@@ -144,6 +144,45 @@ function mergeSettings(base: any, s: any) {
   return out;
 }
 
+// ---------- invoices ----------
+const invKey = (y: string, id: string) => `inv/${y}/${id}`;
+const shareKey = (t: string) => `share/${t}`;
+const shareReportKey = (t: string) => `sharefile/${t}/report`;
+const MAX_FILE = 4.4 * 1024 * 1024;
+const MIME_OK = ["application/pdf", "image/jpeg", "image/png", "image/webp", "image/heic", "image/heif", "image/gif"];
+const DONE = "בוצע";
+function cleanInvMeta(b: any) {
+  const o: any = {};
+  for (const k of ["supplier", "invoiceNo", "detail", "notes"]) if (b?.[k] !== undefined) o[k] = b[k] === null ? null : String(b[k]).slice(0, 500);
+  if (b?.date !== undefined) o.date = /^\d{4}-\d{2}-\d{2}$/.test(String(b.date)) ? String(b.date) : null;
+  if (b?.amount !== undefined) o.amount = b.amount === null || b.amount === "" ? null : Number.isFinite(Number(b.amount)) ? Number(b.amount) : null;
+  return o;
+}
+// link an invoice to an expense row: existing forecast row, or a new row
+function applyInvoice(doc: any, inv: any, apply: any, stamp: any) {
+  if (!apply) return;
+  const month = inv.date ? Number(inv.date.slice(5, 7)) : null;
+  if (apply.expenseId) {
+    const row = doc.expenses.find((r: any) => r.id === apply.expenseId);
+    if (!row) return "שורת ההוצאה לא נמצאה (אולי נמחקה)";
+    row.status = DONE;
+    if (inv.amount !== null && inv.amount !== undefined) row.amount = inv.amount;
+    if (inv.invoiceNo) row.ref = inv.invoiceNo;
+    if (month) row.month = month;
+    Object.assign(row, stamp);
+    inv.expenseId = row.id;
+  } else if (apply.newRow) {
+    const r = cleanRow(apply.newRow);
+    const serial = Math.max(0, ...doc.expenses.map((x: any) => Number(x.serial) || 0)) + 1;
+    const row = { serial, year: Number(doc.year), detail: inv.supplier || null, ...r, status: DONE, amount: inv.amount ?? r.amount ?? null, ref: inv.invoiceNo || r.ref || null, month: month || r.month || null, id: newId(), ...stamp };
+    doc.expenses.push(row);
+    inv.expenseId = row.id;
+  }
+}
+async function getConfig() {
+  return ((await store().get("config/app", { type: "json" })) as any) || { accountantEmail: "", accountantName: "" };
+}
+
 // ---------- handler ----------
 export default async (req: Request, context: Context) => {
   const url = new URL(req.url);
@@ -179,6 +218,35 @@ export default async (req: Request, context: Context) => {
       u.lastLogin = new Date().toISOString();
       await saveUsers(users);
       return json({ token: await signToken(u.email, pwVer(u)), user: pubUser(u) });
+    }
+
+    // ----- public: accountant share links -----
+    if (parts[0] === "share" && m === "GET" && parts[1]) {
+      const sh: any = await store().get(shareKey(parts[1]), { type: "json" });
+      if (!sh) return fail("הקישור לא קיים או בוטל", 404);
+      if (Date.parse(sh.expires) < Date.now()) return fail("תוקף הקישור פג", 410);
+      const cur = await readYear(sh.year);
+      const invs = (cur?.doc.invoices || []).filter((i: any) => sh.invoiceIds.includes(i.id));
+      if (!parts[2]) {
+        return json({
+          year: sh.year, title: sh.title, note: sh.note || "", createdAt: sh.createdAt, expires: sh.expires, createdBy: sh.createdBy,
+          report: sh.hasReport ? { name: sh.reportName } : null,
+          files: invs.map((i: any) => ({ id: i.id, fileName: i.fileName, mime: i.mime, size: i.size, supplier: i.supplier, invoiceNo: i.invoiceNo, date: i.date, amount: i.amount })),
+        });
+      }
+      if (parts[2] === "report" && sh.hasReport) {
+        const data = await store().get(shareReportKey(parts[1]), { type: "arrayBuffer" });
+        if (!data) return fail("הדוח לא נמצא", 404);
+        return new Response(data, { headers: { "content-type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "content-disposition": `attachment; filename*=UTF-8''${encodeURIComponent(sh.reportName)}`, "cache-control": "no-store" } });
+      }
+      if (parts[2] === "file" && parts[3]) {
+        const inv = invs.find((i: any) => i.id === parts[3]);
+        if (!inv) return fail("הקובץ לא נמצא", 404);
+        const data = await store().get(invKey(sh.year, inv.id), { type: "arrayBuffer" });
+        if (!data) return fail("הקובץ לא נמצא", 404);
+        return new Response(data, { headers: { "content-type": inv.mime, "content-disposition": `inline; filename*=UTF-8''${encodeURIComponent(inv.fileName)}`, "cache-control": "no-store" } });
+      }
+      return fail("נתיב לא קיים", 404);
     }
 
     // ----- authenticated -----
@@ -239,6 +307,19 @@ export default async (req: Request, context: Context) => {
       }
     }
 
+    // app config (accountant details)
+    if (parts[0] === "config") {
+      if (m === "GET") return json({ config: await getConfig() });
+      if (m === "PUT") {
+        if (!canEdit) return fail("אין הרשאה", 403);
+        const c = await getConfig();
+        if (typeof body.accountantEmail === "string") c.accountantEmail = body.accountantEmail.trim().slice(0, 200);
+        if (typeof body.accountantName === "string") c.accountantName = body.accountantName.trim().slice(0, 100);
+        await store().setJSON("config/app", c);
+        return json({ config: c });
+      }
+    }
+
     // years
     if (parts[0] === "years") {
       const y = parts[1];
@@ -277,12 +358,16 @@ export default async (req: Request, context: Context) => {
           if (!canEdit) return fail("אין הרשאה", 403);
           const doc = cleanDoc(y, body.data || {});
           doc.updatedBy = who;
+          const prev = await readYear(y);
+          doc.invoices = prev?.doc.invoices || []; // invoice files are kept on import
           await store().setJSON(yearKey(y), doc);
           return json({ doc });
         }
         if (m === "DELETE") {
           if (!isAdmin) return fail("רק מנהל יכול למחוק שנה", 403);
           await store().delete(yearKey(y));
+          const { blobs } = await store().list({ prefix: `inv/${y}/` });
+          for (const b of blobs) await store().delete(b.key);
           return json({ years: await listYears() });
         }
       }
@@ -292,6 +377,97 @@ export default async (req: Request, context: Context) => {
         const r = await mutateYear(y, (doc) => { doc.settings = mergeSettings(doc.settings || defaultSettings(), body); }, who);
         return r.error ? fail(r.error, r.status) : json({ doc: r.doc });
       }
+      if (parts[2] === "invoices") {
+        const invId = parts[3];
+        const stamp = { updatedAt: new Date().toISOString(), updatedBy: who };
+        if (m === "GET" && invId && parts[4] === "file") {
+          const cur = await readYear(y);
+          const inv = cur?.doc.invoices?.find((i: any) => i.id === invId);
+          if (!inv) return fail("החשבונית לא נמצאה", 404);
+          const data = await store().get(invKey(y, invId), { type: "arrayBuffer" });
+          if (!data) return fail("הקובץ לא נמצא", 404);
+          return new Response(data, { headers: { "content-type": inv.mime, "cache-control": "private, no-store" } });
+        }
+        if (m === "POST" && !invId) {
+          const buf = Buffer.from(String(body.file || ""), "base64");
+          if (!buf.length) return fail("לא התקבל קובץ");
+          if (buf.length > MAX_FILE) return fail("הקובץ גדול מדי (עד 4.4MB)");
+          const mime = String(body.mime || "");
+          if (!MIME_OK.includes(mime)) return fail("סוג קובץ לא נתמך – PDF או תמונה בלבד");
+          const id = newId();
+          await store().set(invKey(y, id), new Blob([buf], { type: mime }));
+          const inv: any = { id, fileName: String(body.fileName || "invoice").slice(0, 200), mime, size: buf.length, supplier: null, invoiceNo: null, date: null, amount: null, detail: null, notes: null,
+            ...cleanInvMeta(body.meta || {}), expenseId: null, uploadedAt: stamp.updatedAt, uploadedBy: who, sentAt: null };
+          const r = await mutateYear(y, (doc) => {
+            doc.invoices = doc.invoices || [];
+            doc.invoices.push(inv);
+            return applyInvoice(doc, inv, body.apply, stamp);
+          }, who);
+          if (r.error) { await store().delete(invKey(y, id)); return fail(r.error, r.status); }
+          return json({ doc: r.doc, invoice: inv });
+        }
+        if (m === "PUT" && invId) {
+          const r = await mutateYear(y, (doc) => {
+            const inv = (doc.invoices || []).find((i: any) => i.id === invId);
+            if (!inv) return "החשבונית לא נמצאה";
+            Object.assign(inv, cleanInvMeta(body.meta || {}));
+            if (body.unlink) inv.expenseId = null;
+            return applyInvoice(doc, inv, body.apply, stamp);
+          }, who);
+          return r.error ? fail(r.error, r.status) : json({ doc: r.doc });
+        }
+        if (m === "DELETE" && invId) {
+          const r = await mutateYear(y, (doc) => {
+            const n = (doc.invoices || []).length;
+            doc.invoices = (doc.invoices || []).filter((i: any) => i.id !== invId);
+            if (doc.invoices.length === n) return "החשבונית לא נמצאה";
+          }, who);
+          if (r.error) return fail(r.error, r.status);
+          await store().delete(invKey(y, invId));
+          return json({ doc: r.doc });
+        }
+      }
+
+      if (parts[2] === "shares") {
+        if (m === "GET") {
+          const { blobs } = await store().list({ prefix: "share/" });
+          const list = [];
+          for (const b of blobs) {
+            const sh: any = await store().get(b.key, { type: "json" });
+            if (sh && sh.year === y) list.push({ token: b.key.slice(6), ...sh });
+          }
+          list.sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+          return json({ shares: list });
+        }
+        if (m === "POST") {
+          const ids: string[] = Array.isArray(body.invoiceIds) ? body.invoiceIds.map(String) : [];
+          const cur = await readYear(y);
+          const known = new Set((cur?.doc.invoices || []).map((i: any) => i.id));
+          const invoiceIds = ids.filter((i) => known.has(i));
+          if (!invoiceIds.length && !body.report) return fail("לא נבחרו חשבוניות");
+          const token = randomBytes(24).toString("base64url");
+          const days = Math.min(90, Math.max(1, Number(body.days) || 30));
+          const hasReport = typeof body.report === "string" && body.report.length > 0;
+          if (hasReport) {
+            const rb = Buffer.from(body.report, "base64");
+            if (rb.length > MAX_FILE) return fail("הדוח גדול מדי");
+            await store().set(shareReportKey(token), new Blob([rb]));
+          }
+          const sh = { year: y, invoiceIds, title: String(body.title || `חשבוניות ${y}`).slice(0, 200), note: String(body.note || "").slice(0, 2000),
+            createdAt: new Date().toISOString(), expires: new Date(Date.now() + days * 864e5).toISOString(), createdBy: who, hasReport, reportName: String(body.reportName || `ITCB_Budget_${y}.xlsx`).slice(0, 200) };
+          await store().setJSON(shareKey(token), sh);
+          const r = await mutateYear(y, (doc) => {
+            for (const inv of doc.invoices || []) if (invoiceIds.includes(inv.id)) inv.sentAt = sh.createdAt;
+          }, who);
+          return json({ token, share: sh, doc: r.doc });
+        }
+        if (m === "DELETE" && parts[3]) {
+          await store().delete(shareKey(parts[3]));
+          await store().delete(shareReportKey(parts[3]));
+          return json({ ok: true });
+        }
+      }
+
       const kind = parts[2] as Kind;
       if (KINDS.includes(kind)) {
         const id = parts[3];
