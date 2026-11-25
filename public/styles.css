@@ -490,3 +490,5 @@ svg.mchart .ax{font-size:11px;fill:var(--ink-3);font-family:Assistant,sans-serif
 .file-drop.over{background:var(--navy-soft);border-color:var(--navy)}
 #invDrop{display:block;margin-bottom:12px}
 @media (max-width:900px){.inv-body{grid-template-columns:1fr}.inv-preview{position:static}.inv-preview iframe{height:50vh}}
+.attach-box{margin-top:12px;padding:10px 12px;border:1px dashed #C9CDF2;border-radius:10px;background:#FAFBFF;display:flex;flex-wrap:wrap;gap:8px;align-items:center}
+.attach-box .audit{flex-basis:100%;margin:0}

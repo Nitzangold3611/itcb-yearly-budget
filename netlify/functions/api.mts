@@ -165,6 +165,7 @@ function applyInvoice(doc: any, inv: any, apply: any, stamp: any) {
   if (apply.expenseId) {
     const row = doc.expenses.find((r: any) => r.id === apply.expenseId);
     if (!row) return "שורת ההוצאה לא נמצאה (אולי נמחקה)";
+    if (apply.linkOnly) { inv.expenseId = row.id; return; } // file attached from the expense form: row already saved
     row.status = DONE;
     if (inv.amount !== null && inv.amount !== undefined) row.amount = inv.amount;
     if (inv.invoiceNo) row.ref = inv.invoiceNo;

@@ -1,6 +1,6 @@
 /* ITCB yearly budget – client */
 (() => {
-  const VERSION = "1.3.0";
+  const VERSION = "1.3.1";
   const ROLE_LABEL = { admin: "מנהל", editor: "עורך", viewer: "צופה" };
   const MONTHS = ["", "ינואר", "פברואר", "מרץ", "אפריל", "מאי", "יוני", "יולי", "אוגוסט", "ספטמבר", "אוקטובר", "נובמבר", "דצמבר"];
   const MSHORT = ["", "ינו׳", "פבר׳", "מרץ", "אפר׳", "מאי", "יוני", "יולי", "אוג׳", "ספט׳", "אוק׳", "נוב׳", "דצמ׳"];
@@ -513,6 +513,12 @@
         ${!isNew && !ro ? `<div class="note">כדי להעביר את השורה לסעיף אחר – שנה את <b>הקטגוריה</b>${kind === "expenses" ? " ו/או את <b>הסיווג</b>" : " ו/או את <b>הלקוח</b>"} ושמור.</div>` : ""}
         <div class="grid2">${cols.map(field).join("")}</div>
         ${kind === "expenses" && row ? linkedInvoicesHtml(row.id) : ""}
+        ${kind === "expenses" && !ro ? `<div class="attach-box">
+          <input type="file" id="f_attach" accept="application/pdf,image/*" hidden>
+          <button type="button" class="btn sm" id="attBtn">📎 ${row && invList().some((i) => i.expenseId === row.id) ? "צירוף קובץ נוסף" : "צירוף חשבונית / קבלה"} (PDF או תמונה)</button>
+          <span id="attName" class="muted"></span>
+          <div class="audit" id="attNote">הקובץ יישמר בספריית החשבוניות ויקושר להוצאה. שדות ריקים יושלמו אוטומטית מהמסמך.</div>
+        </div>` : ""}
         ${row && row.updatedAt ? `<div class="audit">עודכן ${fmtDate(row.updatedAt)}${row.updatedBy ? " · " + esc(row.updatedBy) : ""}</div>` : ""}
         <div class="err" id="rowErr"></div>
       </div>
@@ -541,6 +547,34 @@
       }
       return out;
     };
+    // attachment (expenses): file is uploaded after the row is saved, then linked to it
+    let attach = null, attachParsed = {};
+    const attBtn = ov.querySelector("#attBtn");
+    if (attBtn) {
+      const fin = ov.querySelector("#f_attach");
+      attBtn.onclick = () => fin.click();
+      fin.onchange = async () => {
+        const f0 = fin.files[0]; fin.value = "";
+        if (!f0) return;
+        const prep = await prepareInvoiceFile(f0);
+        if (prep.error) return (ov.querySelector("#attNote").textContent = prep.error);
+        attach = prep;
+        ov.querySelector("#attName").textContent = f0.name;
+        const note = ov.querySelector("#attNote");
+        note.textContent = "קורא את המסמך…";
+        try {
+          const { text } = await extractText(prep.file, (st) => (note.textContent = st));
+          attachParsed = parseInvoice(text, f0.name);
+          const filled = [];
+          const setIf = (id, val, label) => { const el = ov.querySelector(id); if (el && !el.value && val !== null && val !== undefined && val !== "") { el.value = val; filled.push(label); } };
+          setIf("#f_amount", attachParsed.amount, "סכום");
+          setIf("#f_ref", attachParsed.invoiceNo, "אסמכתא");
+          if (attachParsed.date) setIf("#f_month", String(+attachParsed.date.slice(5, 7)), "חודש");
+          setIf("#f_detail", attachParsed.supplier, "פירוט");
+          note.innerHTML = filled.length ? `הקובץ יצורף בשמירה. הושלמו מהמסמך: <b>${filled.join(", ")}</b> – נא לבדוק.` : "הקובץ יצורף בשמירה.";
+        } catch { note.textContent = "הקובץ יצורף בשמירה (לא הצלחתי לקרוא ממנו פרטים)."; }
+      };
+    }
     const save = async (asNew) => {
       const data = collect();
       const miss = cols.filter((c) => c.req && (data[c.k] === null || data[c.k] === ""));
@@ -549,7 +583,18 @@
         const r = asNew || isNew
           ? await api(`years/${S.year}/${kind}`, { method: "POST", body: { row: data } })
           : await api(`years/${S.year}/${kind}/${row.id}`, { method: "PUT", body: { row: data } });
-        S.docs[S.year] = r.doc; close(); renderMain(); toast(asNew ? "השורה שוכפלה" : isNew ? "השורה נוספה" : "השינויים נשמרו");
+        S.docs[S.year] = r.doc;
+        if (attach && kind === "expenses") {
+          const rowId = asNew || isNew ? r.doc.expenses[r.doc.expenses.length - 1].id : row.id;
+          try {
+            const r2 = await api(`years/${S.year}/invoices`, { method: "POST", body: {
+              file: await blobToB64(attach.file), fileName: attach.origName, mime: attach.file.type,
+              meta: { supplier: attachParsed.supplier || data.detail || null, invoiceNo: data.ref ? String(data.ref) : null, date: attachParsed.date || null, amount: isNum(data.amount) ? num(data.amount) : null },
+              apply: { expenseId: rowId, linkOnly: true } } });
+            S.docs[S.year] = r2.doc;
+          } catch (e2) { close(); renderMain(); return toast("ההוצאה נשמרה, אבל העלאת הקובץ נכשלה: " + e2.message, true); }
+        }
+        close(); renderMain(); toast((asNew ? "השורה שוכפלה" : isNew ? "השורה נוספה" : "השינויים נשמרו") + (attach ? " והקובץ צורף" : ""));
       } catch (er) { ov.querySelector("#rowErr").textContent = er.message; }
     };
     ov.querySelector("#saveRow").onclick = () => save(false);
@@ -1600,15 +1645,19 @@
     };
   }
 
+  async function prepareInvoiceFile(f0) {
+    let f = f0;
+    if (!INV_MIME.includes(f.type)) return { error: `${f0.name}: סוג קובץ לא נתמך – PDF או תמונה בלבד` };
+    if (f.type.startsWith("image/") && f.type !== "image/gif") f = await compressImage(f);
+    if (f.size > MAX_UPLOAD) return { error: `${f0.name}: הקובץ גדול מ-4.4MB` };
+    return { file: f, origName: f0.name };
+  }
   async function startUpload(files) {
     const items = [];
     const bad = [];
     for (const f0 of files) {
-      let f = f0;
-      if (!INV_MIME.includes(f.type)) { bad.push(`${f.name}: סוג קובץ לא נתמך`); continue; }
-      if (f.type.startsWith("image/") && f.type !== "image/gif") f = await compressImage(f);
-      if (f.size > MAX_UPLOAD) { bad.push(`${f0.name}: גדול מ-4.4MB`); continue; }
-      items.push({ file: f, origName: f0.name });
+      const p = await prepareInvoiceFile(f0);
+      if (p.error) bad.push(p.error); else items.push(p);
     }
     if (bad.length) toast(bad.join(" · "), true);
     if (items.length) openInvoiceReview(items[0], items.slice(1));
